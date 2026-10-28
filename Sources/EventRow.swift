@@ -53,11 +53,13 @@ struct EventRow: View {
                             .background(Capsule().fill(isSoon ? Theme.accent : Color(white: 0.3)))
                     }
                     .buttonStyle(.plain)
-                    .help("Join \(link.label) meeting")
+                    .help("Join \(link.label) meeting · right-click for more")
+                    .contextMenu { MeetingLinkMenuItems(link: link) }
                 }
             }
             .contentShape(Rectangle())
             .onTapGesture { inspecting = true }
+            .contextMenu { if let link { MeetingLinkMenuItems(link: link) } }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 3.5)

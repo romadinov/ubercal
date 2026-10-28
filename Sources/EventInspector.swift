@@ -11,6 +11,7 @@ struct EventInspector: View {
     @Environment(CalendarStore.self) private var store
     let event: EKEvent
 
+    @State private var linkCopied = false
     @State private var title = ""
     @State private var location = ""
     @State private var allDay = false
@@ -90,12 +91,22 @@ struct EventInspector: View {
                     .textSelection(.enabled)
             }
             if let link {
-                Button { link.open() } label: {
-                    Label("Join \(link.longLabel)", systemImage: "video.fill")
-                        .font(.system(size: 13, weight: .medium))
+                HStack(spacing: 12) {
+                    Button { link.open() } label: {
+                        Label("Join \(link.longLabel)", systemImage: "video.fill")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    Spacer(minLength: 0)
+                    Button { link.openInBrowser() } label: { Image(systemName: "safari") }
+                        .help("Open in browser")
+                    Button { link.copy(); linkCopied = true } label: {
+                        Image(systemName: linkCopied ? "checkmark" : "doc.on.doc")
+                    }
+                    .help("Copy meeting link")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Self.link)
+                .contextMenu { MeetingLinkMenuItems(link: link) }
             }
             if editable {
                 TextField("Add Location", text: $location)

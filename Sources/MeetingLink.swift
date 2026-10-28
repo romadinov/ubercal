@@ -1,5 +1,6 @@
 import AppKit
 import EventKit
+import SwiftUI
 
 struct MeetingLink {
     enum Kind { case teams, meet, zoom, webex, facetime }
@@ -99,5 +100,25 @@ struct MeetingLink {
             break
         }
         ws.open(url)
+    }
+
+    /// Skips the native app, e.g. when Teams isn't installed or is signed into another tenant.
+    func openInBrowser() { NSWorkspace.shared.open(url) }
+
+    func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+}
+
+/// Copy / open-in-browser items, shared by the Join buttons' context menus and the event card.
+struct MeetingLinkMenuItems: View {
+    let link: MeetingLink
+
+    var body: some View {
+        Button("Join \(link.label) Meeting") { link.open() }
+        Button("Open \(link.label) in Browser") { link.openInBrowser() }
+        Divider()
+        Button("Copy Meeting Link") { link.copy() }
     }
 }

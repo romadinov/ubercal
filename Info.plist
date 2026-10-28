@@ -13,18 +13,18 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSContactsUsageDescription</key>
-	<string>Ubercal looks up people you mention ("with Nathan") so they can be invited.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Ubercal shows, creates and responds to events from your Mac calendars.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Ubercal shows, creates and responds to events from your Mac calendars.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Ubercal looks up people you mention ("with Nathan") so they can be invited.</string>
 </dict>
 </plist>
