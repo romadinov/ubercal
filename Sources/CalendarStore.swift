@@ -35,6 +35,24 @@ final class CalendarStore {
     var defaultCalendarID: String? {
         didSet { UserDefaults.standard.set(defaultCalendarID, forKey: "defaultCalendar") }
     }
+    // MARK: OWA (Outlook on the web — see Outlook.swift, OutlookReader.swift)
+
+    /// Whether the user has turned the OWA calendar on (read through the shared agent-browser session).
+    var sparkEnabled: Bool = UserDefaults.standard.bool(forKey: "sparkEnabled") {
+        didSet { UserDefaults.standard.set(sparkEnabled, forKey: "sparkEnabled") }
+    }
+    /// Set when the shared Outlook session has signed out and needs an interactive sign-in.
+    var outlookNeedsLogin = false
+    /// Display name of the OWA account, when known.
+    var outlookAccountName: String?
+    /// Unsaved calendar that gives OWA events a colour and title; nothing is written to EventKit.
+    let graphCal: EKCalendar
+    /// OWA events built in memory and merged into the views.
+    var graphEvents: [EKEvent] = []
+    var graphMeta: [String: GraphMeta] = [:]
+    var graphWindow: Range<Date>?
+    var graphSyncedAt: Date?
+    var graphSyncing = false
 
     /// Bumped on every reload so other views (the window) know to refetch their own range.
     private(set) var revision = 0
@@ -61,6 +79,10 @@ final class CalendarStore {
         hiddenCalendarIDs = Set(UserDefaults.standard.stringArray(forKey: "hiddenCalendars") ?? [])
         defaultCalendarID = UserDefaults.standard.string(forKey: "defaultCalendar")
 
+        graphCal = EKCalendar(for: .event, eventStore: ek)
+        graphCal.title = "OWA"
+        graphCal.cgColor = CGColor(red: 0.0, green: 0.46, blue: 0.84, alpha: 1)   // Outlook blue
+
         let nc = NotificationCenter.default
         nc.addObserver(forName: .EKEventStoreChanged, object: ek, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.storeChanged() }
@@ -69,6 +91,7 @@ final class CalendarStore {
             Task { @MainActor in self?.dayChanged() }
         }
         Task { await requestAccess() }
+        if sparkEnabled { Task { await syncGraph(force: true) } }
     }
 
     // MARK: Access
@@ -126,12 +149,14 @@ final class CalendarStore {
         calendars = ek.calendars(for: .event).sorted {
             ($0.source.title, $0.title) < ($1.source.title, $1.title)
         }
+        syncGraphIfStale()
         let visible = visibleCalendars
         let range = neededRange
         fetched = range
-        guard !visible.isEmpty else { events = []; dots = [:]; pending = []; return }
 
-        events = Self.dedupe(ek.events(matching: ek.predicateForEvents(withStart: range.lowerBound, end: range.upperBound, calendars: visible)))
+        let ekEvents = visible.isEmpty ? [] :
+            ek.events(matching: ek.predicateForEvents(withStart: range.lowerBound, end: range.upperBound, calendars: visible))
+        events = Self.dedupe(ekEvents + graphEventsOverlapping(range))
             .sorted { $0.startDate < $1.startDate }
 
         var d: [Date: [CGColor]] = [:]
@@ -149,16 +174,21 @@ final class CalendarStore {
 
         let now = Date()
         let horizon = cal.date(byAdding: .day, value: 60, to: now)!
-        pending = ek.events(matching: ek.predicateForEvents(withStart: now, end: horizon, calendars: visible))
+        let ekPending = visible.isEmpty ? [] :
+            ek.events(matching: ek.predicateForEvents(withStart: now, end: horizon, calendars: visible))
+        let graphPending = graphEventsOverlapping(now..<horizon)
+        pending = (ekPending + graphPending)
             .filter { status(of: $0) == .pending && isInvitation($0) }
             .sorted { $0.startDate < $1.startDate }
     }
 
     /// Events in an arbitrary range, for the window's views.
     func fetchEvents(_ range: Range<Date>) -> [EKEvent] {
+        guard access == .granted else { return [] }
         let visible = visibleCalendars
-        guard access == .granted, !visible.isEmpty else { return [] }
-        return Self.dedupe(ek.events(matching: ek.predicateForEvents(withStart: range.lowerBound, end: range.upperBound, calendars: visible)))
+        let ekEvents = visible.isEmpty ? [] :
+            ek.events(matching: ek.predicateForEvents(withStart: range.lowerBound, end: range.upperBound, calendars: visible))
+        return Self.dedupe(ekEvents + graphEventsOverlapping(range))
             .sorted { $0.startDate < $1.startDate }
     }
 
@@ -271,22 +301,28 @@ final class CalendarStore {
     // MARK: Invitations
 
     func status(of e: EKEvent) -> EKParticipantStatus? {
-        e.attendees?.first(where: \.isCurrentUser)?.participantStatus
+        if let m = graphMeta(for: e) { return m.status }
+        return e.attendees?.first(where: \.isCurrentUser)?.participantStatus
     }
 
     func isInvitation(_ e: EKEvent) -> Bool {
+        if let m = graphMeta(for: e) { return m.isInvitation }
         guard let attendees = e.attendees, attendees.contains(where: \.isCurrentUser) else { return false }
         return e.organizer?.isCurrentUser != true
     }
 
     /// EventKit has no public API for responding; Calendar.app uses these EKEvent methods.
     /// Each one is checked at runtime so an OS change degrades to "Open in Calendar" instead of crashing.
+    /// Graph events respond over the network instead (see respond(_:_:)).
     func canRespond(_ e: EKEvent) -> Bool {
-        guard isInvitation(e), (e as NSObject).responds(to: NSSelectorFromString("setParticipationStatus:")) else { return false }
+        if isOutlookEvent(e) { return false }   // OWA is read-only here; RSVP in Outlook.
+        guard isInvitation(e),
+              (e as NSObject).responds(to: NSSelectorFromString("setParticipationStatus:")) else { return false }
         return privateBool(e, "allowsParticipationStatusModifications") ?? true
     }
 
     func canProposeTime(_ e: EKEvent) -> Bool {
+        if isOutlookEvent(e) { return canRespond(e) }
         guard canRespond(e), (e as NSObject).responds(to: NSSelectorFromString("setProposedStartDate:")) else { return false }
         if privateBool(e, "disallowProposeNewTime") == true { return false }
         return privateBool(e, "serverSupportedProposeNewTime") ?? true
@@ -317,7 +353,8 @@ final class CalendarStore {
 
     /// Whether a comment can ride along with the RSVP; otherwise Ubercal emails it.
     func canComment(_ e: EKEvent) -> Bool {
-        privateBool(e, "allowsResponseCommentModifications") ?? false
+        if isOutlookEvent(e) { return false }   // OWA is read-only here.
+        return privateBool(e, "allowsResponseCommentModifications") ?? false
     }
 
     /// Fallback when the server can't carry a comment or a proposed time: a pre-filled email
@@ -400,8 +437,14 @@ final class CalendarStore {
         return ek.defaultCalendarForNewEvents
     }
 
+    /// Where quick add can put an event: writable EventKit calendars only (OWA is read-only here).
+    var newEventTargets: [EKCalendar] {
+        writableCalendars + [outlookTarget].compactMap { $0 }
+    }
+
     func canEdit(_ e: EKEvent) -> Bool {
-        e.calendar.allowsContentModifications && !isInvitation(e)
+        if isOutlookEvent(e) { return false }   // OWA events are read-only here; edit them in Outlook.
+        return e.calendar.allowsContentModifications && !isInvitation(e)
     }
 
     func save(_ e: EKEvent) {
@@ -414,11 +457,22 @@ final class CalendarStore {
         reload()
     }
 
+    enum CreateResult {
+        case saved(EKEvent)
+        /// Created in the OWA/Outlook account over Graph; it appears when the sync returns.
+        case handedToOutlook
+        case failed
+    }
+
     @discardableResult
-    func create(_ draft: DraftEvent, in calendar: EKCalendar?) -> EKEvent? {
+    func create(_ draft: DraftEvent, in calendar: EKCalendar?) -> CreateResult {
         guard let target = calendar ?? defaultCalendar else {
             lastError = "No writable calendar."
-            return nil
+            return .failed
+        }
+        if isOutlookEvent(target) {
+            Outlook.open()   // read-only here; create it in Outlook
+            return .handedToOutlook
         }
         let e = EKEvent(eventStore: ek)
         e.calendar = target
@@ -436,10 +490,10 @@ final class CalendarStore {
             try ek.save(e, span: .thisEvent, commit: true)
             select(draft.start)
             reload()
-            return e
+            return .saved(e)
         } catch {
             lastError = "Couldn't create event: \(error.localizedDescription)"
-            return nil
+            return .failed
         }
     }
 

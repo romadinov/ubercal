@@ -90,9 +90,14 @@ struct PopoverView: View {
         guard !searching else { return }
         Task {
             guard let draft = await quick.finalDraft() else { return }
-            if let e = store.create(draft, in: nil) {
+            switch store.create(draft, in: nil) {
+            case .saved(let e):
                 quick.clear()
                 created = CreatedEvent(event: e)
+            case .handedToOutlook:
+                quick.clear()
+            case .failed:
+                break
             }
         }
     }
@@ -190,7 +195,9 @@ struct DraftPreview: View {
             if refining {
                 ProgressView().controlSize(.small)
             } else {
-                Text("↩︎ add").font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                Text(store.isOutlookEvent(store.defaultCalendar) ? "↩︎ Outlook" : "↩︎ add")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                    .help(store.isOutlookEvent(store.defaultCalendar) ? "Creates the event in your OWA (Outlook) account" : "")
             }
         }
         .padding(10)
@@ -510,11 +517,15 @@ private struct Footer: View {
 
             Menu {
                 Picker("New events go to", selection: Binding(
-                    get: { store.defaultCalendar?.calendarIdentifier ?? "" },
+                    get: { store.isOutlookEvent(store.defaultCalendar) ? "graph" : (store.defaultCalendar?.calendarIdentifier ?? "") },
                     set: { store.defaultCalendarID = $0 })) {
-                    ForEach(store.writableCalendars, id: \.calendarIdentifier) {
-                        Text("\($0.title) — \($0.source.title)").tag($0.calendarIdentifier)
+                    ForEach(store.newEventTargets, id: \.calendarIdentifier) {
+                        Text(store.isOutlookEvent($0) ? "\($0.title) — via Outlook" : "\($0.title) — \($0.source.title)")
+                            .tag(store.isOutlookEvent($0) ? "graph" : $0.calendarIdentifier)
                     }
+                }
+                Section("OWA Calendar") {
+                    OutlookAccountItems()
                 }
                 Toggle("Use Apple Intelligence for quick add", isOn: $useAI)
                     .disabled(!QuickAddModel.aiAvailable)
@@ -590,6 +601,31 @@ struct CalendarFilterItems: View {
 extension CalendarStore {
     var calendarFilterTitle: String {
         hiddenCalendarIDs.isEmpty ? "All Calendars" : "\(visibleCalendars.count) Calendars"
+    }
+}
+
+/// Controls for the OWA calendar, read (read-only) from Outlook on the web through the shared,
+/// already-signed-in agent-browser session (see OutlookReader.swift).
+struct OutlookAccountItems: View {
+    @Environment(CalendarStore.self) private var store
+
+    var body: some View {
+        if !OutlookReader.isInstalled {
+            Text("Install agent-browser to read OWA")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+        } else if !store.sparkEnabled {
+            Button("Enable OWA Calendar") { store.outlookEnable() }
+        } else if store.outlookNeedsLogin {
+            Text("Outlook sign-in expired").font(.system(size: 11)).foregroundStyle(.secondary)
+            Button("Sign In to Outlook…") { store.outlookSignIn() }
+            Button("Refresh OWA Now") { Task { await store.syncGraph(force: true) } }
+            Button("Hide OWA Calendar") { store.outlookSignOut() }
+        } else {
+            Text(store.outlookAccount ?? "OWA · shared Outlook session")
+            Button("Refresh OWA Now") { Task { await store.syncGraph(force: true) } }
+            Button(Outlook.appInstalled ? "Open Outlook" : "Open Outlook on the Web") { Outlook.open() }
+            Button("Hide OWA Calendar") { store.outlookSignOut() }
+        }
     }
 }
 

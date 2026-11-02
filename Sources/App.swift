@@ -152,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let start = store.cal.nextDate(after: Date().addingTimeInterval(86400 * 2), matching: d, matchingPolicy: .nextTime)!
             let draft = DraftEvent(title: "Ubercal invite test", start: start, end: start.addingTimeInterval(1800), allDay: false, location: nil,
                                    invitees: [InviteeChoice(query: parts[1], options: [ContactSearch.Person(name: parts[1], email: parts[1])], selectedIndex: 0)])
-            if let e = store.create(draft, in: cal) {
+            if case .saved(let e) = store.create(draft, in: cal) {
                 out = "created \(e.eventIdentifier ?? "?") start \(start)\nattendees " + (e.attendees ?? []).map(\.url.absoluteString).joined(separator: ", ")
             } else { out = "create failed: \(store.lastError ?? "")" }
         } else if parts[0] == "delete", let e = store.ek.event(withIdentifier: parts[1]) {
@@ -177,6 +177,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         out += "pending \(store.pending.count): " + store.pending.map { $0.title ?? "" }.joined(separator: " | ") + "\n"
         out += "workDomain \(store.workDomain ?? "-")\n"
+        out += "outlook signedIn \(store.outlookSignedIn) account=\(store.outlookAccount ?? "-") graphEvents=\(store.graphEvents.count) app=\(Outlook.appInstalled)\n"
+        // What a subscribed feed carries: titles, busy status, attendees, links.
+        let week = Calendar.current.date(byAdding: .day, value: 7, to: start)!
+        for c in ek.calendars(for: .event) where c.type == .subscription {
+            for e in ek.events(matching: ek.predicateForEvents(withStart: start, end: week, calendars: [c])).prefix(12) {
+                out += "FEED \(c.title) | \(e.title ?? "-") | \(e.startDate.formatted(date: .abbreviated, time: .shortened)) | avail=\(e.availability.rawValue) attendees=\(e.attendees?.count ?? -1) loc=\(e.location?.prefix(40) ?? "-") notes=\(e.notes?.count ?? 0)ch link=\(MeetingLink.find(in: e)?.label ?? "-")\n"
+            }
+        }
+        out += "LOCAL sources: " + ek.sources.filter { $0.sourceType == .local }.map(\.title).joined(separator: ", ") + "\n"
+        out += "defaultForNewEvents source: \(ek.defaultCalendarForNewEvents?.source.title ?? "-") type=\(ek.defaultCalendarForNewEvents?.source.sourceType.rawValue ?? -1)\n"
+        out += "all source types: " + ek.sources.map { "\($0.title)=\($0.sourceType.rawValue)" }.joined(separator: ", ") + "\n"
         let cn = CNContactStore()
         for c in (try? cn.containers(matching: nil)) ?? [] {
             let n = (try? cn.unifiedContacts(matching: CNContact.predicateForContactsInContainer(withIdentifier: c.identifier), keysToFetch: [CNContactGivenNameKey as CNKeyDescriptor]).count) ?? -1

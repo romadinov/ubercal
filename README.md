@@ -12,6 +12,26 @@ without its own connector.
 
 Requires macOS 26 or later.
 
+## Outlook-only accounts (OWA)
+
+Some tenants allow no client but Outlook: the account never reaches the system Calendar, and the admin
+may also cap calendar publishing and sharing at busy-only and block creating an app registration — so
+there's no OAuth or feed that carries real event detail. For such an account Ubercal shows a read-only
+**OWA** calendar by reading Outlook on the web (`outlook.office.com`) through a browser session you are
+already signed in to, as yourself. Because it reads what you see in the approved app, it shows real
+detail — titles, times, organiser — not just busy blocks. Nothing is written to any local calendar.
+
+It reuses the signed-in [agent-browser](https://www.npmjs.com/package/agent-browser) session that
+[Jinnie](https://github.com/romadinov/Jinnie) keeps for Outlook (session `jinnie-outlook`, a persistent
+Chrome profile), so there is no second sign-in. Install agent-browser once
+(`npm i -g agent-browser && agent-browser install`) and sign in to Outlook in that session.
+
+Gear menu › **OWA Calendar** › **Enable OWA Calendar**. OWA events then appear in the agenda, month and
+window views and search, in Outlook blue. It is **read-only** — RSVP, creating and editing happen in
+Outlook (each card has an **Open Outlook** button). The reader only opens pages and takes snapshots; it
+never clicks, types or changes anything. When the shared session's sign-in expires, the menu shows
+**Sign In to Outlook…** (a visible window; signing in re-authenticates both Ubercal and Jinnie).
+
 ## Build
 
 ```sh

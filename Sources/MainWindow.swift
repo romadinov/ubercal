@@ -276,10 +276,18 @@ private struct WindowQuickAdd: View {
                     .focused($focused)
                     .onSubmit {
                         Task {
-                            guard let d = await quick.finalDraft(), let e = store.create(d, in: nil) else { return }
-                            quick.clear()
-                            added(d)
-                            created = e
+                            guard let d = await quick.finalDraft() else { return }
+                            switch store.create(d, in: nil) {
+                            case .saved(let e):
+                                quick.clear()
+                                added(d)
+                                created = e
+                            case .handedToOutlook:
+                                quick.clear()
+                                added(d)
+                            case .failed:
+                                break
+                            }
                         }
                     }
                 if let d = quick.draft { DraftPreview(draft: d, refining: quick.refining, choose: quick.choose) }

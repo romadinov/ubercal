@@ -340,6 +340,9 @@ struct EventInspector: View {
                 }
                 propose
             }
+        } else if store.isOutlookEvent(event) {
+            Text("Read-only here — respond in Outlook.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         } else {
             Text("Respond in Calendar — this account doesn't allow it here.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -377,8 +380,16 @@ struct EventInspector: View {
             if event.hasRecurrenceRules && editable {
                 Text("Edits apply to this occurrence only").font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            if store.isOutlookEvent(event) {
+                Text("From OWA (Outlook) — edit the event in Outlook; changes appear on the next sync.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             HStack(spacing: 14) {
-                Button("Open in Calendar") { store.openInCalendar(event) }
+                if store.isOutlookEvent(event) {
+                    Button("Open Outlook") { Outlook.open() }
+                } else {
+                    Button("Open in Calendar") { store.openInCalendar(event) }
+                }
                 if editable {
                     Button("Delete", role: .destructive) { store.delete(event) }.foregroundStyle(Theme.year)
                 }
